@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code Review Agent</title>
+<style>
+:root{--bg:#0b0b0d;--panel:#111114;--ed:#1e1e1e;--line:#26262b;--tx:#d4d4d8;--mut:#71717a;--acc:#4f46e5;--acc2:#a78bfa;--hi:#f87171;--md:#fbbf24;--lo:#60a5fa;--ok:#34d399}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;padding:12px;gap:0}
+.mono{font-family:Consolas,Menlo,monospace}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border:1px solid var(--line);border-radius:10px 10px 0 0;background:var(--bg)}
+h1{font-size:18px;margin:0;color:var(--acc2)}
+.bar{display:flex;gap:10px;align-items:center}
+select,button,input{font:inherit;color:var(--tx);background:#0f0f12;border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+button{cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc2);outline-offset:1px}
+.run{background:var(--acc);border-color:var(--acc);font-weight:600;color:#fff}
+main{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px;overflow:hidden}
+section{display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+section+section{border-left:1px solid var(--line)}
+.h{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;color:var(--mut);font-size:12px;border-bottom:1px solid var(--line)}
+.ed{flex:1;display:flex;min-height:0;background:var(--ed)}
+#gut{padding:12px 8px 12px 14px;color:#52525b;text-align:right;user-select:none;overflow:hidden;line-height:21px;font-size:13px}
+#gut div.f-high{color:var(--hi);font-weight:700}#gut div.f-medium{color:var(--md);font-weight:700}#gut div.f-low{color:var(--lo);font-weight:700}
+#code{flex:1;background:transparent;border:0;color:#e4e4e7;resize:none;padding:12px;line-height:21px;font-size:13px;white-space:pre;outline-offset:-2px}
+.right{overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:12px}
+.badge{border:1px solid;border-radius:5px;padding:2px 9px;font-size:12px}
+.b-ready{color:var(--mut);border-color:var(--line)}.b-ok{color:var(--ok);border-color:#065f46;background:#022c22}.b-warn{color:var(--md);border-color:#78350f;background:#2a1a05}
+.card{border:1px solid var(--line);border-left-width:3px;border-radius:6px;padding:10px 12px;background:#0d0d10}
+.card.high{border-left-color:var(--hi)}.card.medium{border-left-color:var(--md)}.card.low{border-left-color:var(--lo)}
+.card.done{opacity:.45}
+.card h3{margin:0 0 2px;font-size:14px}.card p{margin:2px 0;color:#a1a1aa}
+.fix{background:#18181b;padding:5px 8px;border-radius:4px;font-size:12px;margin:6px 0;color:#c4b5fd;overflow:auto}
+.mem{color:var(--acc2);font-size:12px}
+.row{display:flex;gap:8px;margin-top:6px}.row button{padding:4px 10px;font-size:12px}
+.learn{border-top:1px solid var(--line);padding-top:12px}
+.learn h2{font-size:13px;margin:0 0 8px;color:var(--acc2)}
+.rule{padding:5px 0;font-size:13px;border-bottom:1px dashed var(--line)}.rule small{color:var(--mut)}
+.rule.learned{color:var(--ok)}
+.add{display:flex;gap:8px;margin-top:8px}.add input{flex:1}
+.note{color:var(--mut);font-size:13px}
+@media(max-width:800px){main{grid-template-columns:1fr;grid-template-rows:45vh auto}section+section{border-left:0;border-top:1px solid var(--line)}}
+</style></head><body>
+<header>
+  <h1>Code Review Agent</h1>
+  <div class="bar">
+    <span class="badge b-ready" title="This demo reviews Java only">Java</span>
+    <button id="reset" title="Clear everything the agent has learned">Reset memory</button>
+    <button class="run" id="run">Review code</button>
+  </div>
+</header>
+<main>
+  <section>
+    <div class="h mono"><span>// CODE EDITOR</span><span id="rc">Review #0</span></div>
+    <div class="ed mono"><div id="gut"></div><textarea id="code" spellcheck="false" aria-label="Code editor"></textarea></div>
+  </section>
+  <section>
+    <div class="h mono"><span>// REVIEW FINDINGS</span><span id="mode" class="badge b-ready">Ready</span></div>
+    <div class="right">
+      <div id="out" class="note">Paste code and choose Review code. Accept or dismiss each finding — the agent remembers and applies it on the next review.</div>
+      <div class="learn">
+        <h2>What the agent has learned</h2>
+        <div id="mem"></div>
+        <div class="add"><input id="rule" placeholder="Add a team standard, e.g. Use snake_case for functions"><button id="addb">Add rule</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let n=0,cur=[];
+const SAMPLE=`public class UserService {
+    public String getUser(int id) {
+        System.out.println("Fetching user " + id)
+        try {
+            return db.find(id);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        // TODO: handle missing user
+        return null;
+    }
+}
+`;
+$('code').value=SAMPLE;
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function gutter(){const L=$('code').value.split('\n').length,m={};cur.forEach(f=>m[f.line]=f.severity);
+ $('gut').innerHTML=Array.from({length:L},(_,i)=>`<div class="${m[i+1]?'f-'+m[i+1]:''}">${i+1}</div>`).join('');}
+$('code').addEventListener('input',gutter);
+$('code').addEventListener('scroll',()=>$('gut').scrollTop=$('code').scrollTop);
+async function api(p,b){const r=await fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{});return r.json();}
+async function run(){
+ $('run').disabled=true;$('run').textContent='Reviewing…';
+ try{const d=await api('/review',{code:$('code').value,language:'java'});
+  n++;$('rc').textContent='Review #'+n;cur=d.findings;gutter();
+  const live=!d.mode.startsWith('demo');$('mode').textContent=live?d.mode[0].toUpperCase()+d.mode.slice(1)+' connected':d.mode;$('mode').className='badge '+(live?'b-ok':'b-warn');
+  let h=d.hidden?`<div class="note">${d.hidden} suggestion(s) hidden because your team dismissed them before.</div>`:'';
+  h+=d.findings.length?d.findings.map((f,i)=>`<div class="card ${f.severity}" id="c${i}"><h3>Line ${f.line}: ${esc(f.title)}</h3><p>${esc(f.message)}</p>${f.fix?`<div class="fix mono">${esc(f.fix)}</div>`:''}${f.remembered?`<div class="mem">Flagged because your team accepted this ${f.seen} time(s) before</div>`:''}<div class="row"><button onclick="fb(${i},'accept')">Accept</button><button onclick="fb(${i},'dismiss')">Dismiss</button></div></div>`).join(''):'<div class="note">No issues found.</div>';
+  $('out').innerHTML=h;
+ }catch(e){$('mode').textContent='Server offline';$('mode').className='badge b-warn';$('out').textContent='Could not reach the backend. Start it with: uvicorn main:app --reload';}
+ $('run').disabled=false;$('run').textContent='Review code';
+}
+async function fb(i,v){await api('/feedback',{title:cur[i].title,verdict:v});const c=$('c'+i);c.classList.add('done');c.querySelector('.row').innerHTML=`<span class="note">${v==='accept'?'Accepted':'Dismissed'} — remembered</span>`;mem();}
+async function mem(){const d=await api('/memory');
+ const rules=d.rules.map(r=>`<div class="rule ${r.kind}">${esc(r.text)} <small>${r.kind==='learned'?'(learned from feedback)':'(team standard)'}</small></div>`).join('');
+ const s=Object.entries(d.stats).map(([t,v])=>`<div class="rule">${esc(t)} <small>accepted ${v.accept} · dismissed ${v.dismiss}</small></div>`).join('');
+ $('mem').innerHTML=(rules||s)?rules+s:'<div class="note">Nothing yet. Give feedback on a finding to start.</div>';}
+$('run').onclick=run;
+$('addb').onclick=async()=>{const t=$('rule').value.trim();if(t){await api('/rules',{text:t});$('rule').value='';mem();}};
+$('reset').onclick=async()=>{await api('/reset',{});n=0;$('rc').textContent='Review #0';mem();};
+gutter();mem();
+</script></body></html>
